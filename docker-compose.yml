@@ -24,7 +24,7 @@ user_service:
     DB_URI: postgres://postgres:postgres2016@postgres/users
     RABBITMQ_USER: yo
     RABBITMQ_PASS: yo
-    DEBUG: on
+    DEBUG: 'yes'
 
 importer:
   build: importer_service
@@ -33,6 +33,6 @@ importer:
   environment:
     RABBITMQ_USER: yo
     RABBITMQ_PASS: yo
-    DEBUG: on
+    DEBUG: 'yes'
   volumes:
     - ./data:/var/data/

@@ -1,3 +1,2 @@
-aiopg
-asynqp
-retry
+aiopg==0.9.2
+asynqp==0.4

@@ -1,1 +1,1 @@
-asynqp
+asynqp==0.4
