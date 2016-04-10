@@ -1,10 +1,11 @@
-import asyncio
 import logging
 import os
-import asynqp
+
 import aiopg
-from retry import retry
+import asyncio
+import asynqp
 import psycopg2
+from retry import retry
 
 schema = """CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(100) NOT NULL,
@@ -14,7 +15,7 @@ schema = """CREATE TABLE IF NOT EXISTS users (
 --- CREATE UNIQUE INDEX users_email_uindex ON users (email);
 """
 
-udate_query = """
+update_query = """
 --- Cool kid use ON CONFLICT
 SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 BEGIN TRANSACTION;
@@ -29,7 +30,7 @@ log = logging.getLogger()
 log.setLevel(logging.DEBUG)
 
 
-@retry(OSError)
+@retry(ConnectionRefusedError, tries=10, delay=1)
 async def init_queue():
     # connect to the RabbitMQ broker
     connection = await asynqp.connect('docker', 5672, username='yo', password='yo')
@@ -40,6 +41,7 @@ async def init_queue():
     # Create a queue and an exchange on the broker
     exchange = await channel.declare_exchange('email.exchange', 'direct')
     queue = await channel.declare_queue('emails.queue')
+    await queue.bind(exchange, 'routing.key')
     return queue
 
 
@@ -51,34 +53,28 @@ async def init_db():
             await cur.execute(schema)
     return pool
 
+
 async def insert(pool, data):
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(udate_query, data)
-            await cur.execute('select * from users')
-            r = await cur.fetchall()
-            log.debug("Got %s", r)
-
+            await cur.execute(update_query, data)
 
 
 @asyncio.coroutine
 def email_collector(queue, pool):
-    # queue = yield from init_queue()
-    # pool = yield from init_db()
     while True:
         received_message = yield from queue.get()
-        yield from insert(pool, {'email': 'test@test', 'fullname': 'Hello'})
         if not received_message:
-            log.debug('Pooling...')
             yield from asyncio.sleep(1)
             continue
+        yield from insert(pool, received_message.json())
         print(received_message.json())  # get JSON from incoming messages easily
         received_message.ack()
 
 async def spawn(loop):
     queue = await init_queue()
     pool = await init_db()
-    for _ in range(2):
+    for _ in range(5):
         loop.create_task(email_collector(queue, pool))
 
 if __name__ == "__main__":
