@@ -28,7 +28,6 @@ commit TRANSACTION;
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler())
-log.setLevel(logging.DEBUG)
 
 
 async def retry_fut(fut_factory, exceptions, tries=10, delay=1):
@@ -46,22 +45,36 @@ async def retry_fut(fut_factory, exceptions, tries=10, delay=1):
     raise RuntimeError("Exhausted: {}".format(errors[0]))
 
 
-async def init_queue():
-    # connect to the RabbitMQ broker
-    connect = lambda: asynqp.connect('rabbitmq', 5672,
-                                     username=os.getenv('RABBITMQ_USER', 'yo'),
-                                     password=os.getenv('RABBITMQ_PASS', 'yo'))
+class RabbitSupervisor(object):
 
-    connection = await retry_fut(connect, (ConnectionError, ConnectionRefusedError, OSError))
+    def __init__(self):
+        self.queue = None
 
-    # Open a communications channel
-    channel = await connection.open_channel()
+    async def init_queue(self):
+        # connect to the RabbitMQ broker
+        connect = lambda: asynqp.connect('rabbitmq', 5672,
+                                         username=os.getenv('RABBITMQ_USER', 'yo'),
+                                         password=os.getenv('RABBITMQ_PASS', 'yo'))
 
-    # Create a queue and an exchange on the broker
-    exchange = await channel.declare_exchange('email.exchange', 'direct')
-    queue = await channel.declare_queue('emails.queue')
-    await queue.bind(exchange, 'routing.key')
-    return queue
+        connection = await retry_fut(connect, (ConnectionError, ConnectionRefusedError, OSError))
+
+        # Open a communications channel
+        channel = await connection.open_channel()
+
+        # Create a queue and an exchange on the broker
+        exchange = await channel.declare_exchange('email.exchange', 'direct')
+        queue = await channel.declare_queue('emails.queue')
+        await queue.bind(exchange, 'routing.key')
+        self.queue = queue
+        return queue
+
+    async def receive(self):
+        while True:
+            received_message = await self.queue.get()
+            if not received_message:
+                await asyncio.sleep(1)
+                continue
+            return received_message
 
 
 async def init_db():
@@ -79,25 +92,24 @@ async def insert(pool, data):
             await cur.execute(update_query, data)
 
 
-@asyncio.coroutine
-def email_collector(queue, pool):
+async def email_collector(rabbit, pool):
     while True:
-        received_message = yield from queue.get()
-        if not received_message:
-            yield from asyncio.sleep(1)
-            continue
-        yield from insert(pool, received_message.json())
-        log.info("Message: %s", received_message.json())
+        received_message = await rabbit.receive()
+        await insert(pool, received_message.json())
+        log.debug("Message: %s", received_message.json())
         received_message.ack()
 
 
 async def spawn(loop):
-    queue = await init_queue()
+    rabbit = RabbitSupervisor()
+    await rabbit.init_queue()
     pool = await init_db()
     for _ in range(5):
-        loop.create_task(email_collector(queue, pool))
+        loop.create_task(email_collector(rabbit, pool))
 
 if __name__ == "__main__":
+    if os.getenv('DEBUG'):
+        log.setLevel(logging.DEBUG)
     loop = asyncio.get_event_loop()
     loop.create_task(spawn(loop))
     loop.run_forever()

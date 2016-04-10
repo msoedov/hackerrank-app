@@ -9,7 +9,7 @@ rabbitmq:
 postgres:
   image: postgres:9.5
   ports:
-    - "5432:5432" # Bind host port 5432 to PostgreSQL port 5432
+    - "5432:5432"
   environment:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres2016
@@ -24,6 +24,7 @@ user_service:
     DB_URI: postgres://postgres:postgres2016@postgres/users
     RABBITMQ_USER: yo
     RABBITMQ_PASS: yo
+    DEBUG: on
 
 importer:
   build: importer_service
@@ -32,5 +33,6 @@ importer:
   environment:
     RABBITMQ_USER: yo
     RABBITMQ_PASS: yo
+    DEBUG: on
   volumes:
     - ./data:/var/data/

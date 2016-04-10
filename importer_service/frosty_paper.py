@@ -8,7 +8,6 @@ from asyncio import Event, Queue
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler())
-log.setLevel(logging.DEBUG)
 
 
 async def retry_fut(fut_factory, exceptions, tries=10, delay=1):
@@ -81,7 +80,7 @@ async def spredsheet_reader(queue, done, file_path):
 async def rabbit_sender(queue, rabbit_sender):
     while True:
         msg = await queue.get()
-        log.info('Sent {}'.format(msg))
+        log.debug('Sent {}'.format(msg))
         rabbit_sender(msg)
         queue.task_done()
 
@@ -108,5 +107,7 @@ async def spawn(loop):
 
 
 if __name__ == "__main__":
+    if os.getenv('DEBUG'):
+        log.setLevel(logging.DEBUG)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(spawn(loop))
