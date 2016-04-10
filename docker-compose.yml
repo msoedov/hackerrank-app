@@ -24,8 +24,15 @@ user:
      - postgres
   environment:
     DB_URI: postgres://postgres:postgres2016@postgres/users
+    RABBITMQ_USER: yo
+    RABBITMQ_PASS: yo
 
 importer:
   build: importer_service
   links:
      - rabbitmq
+  environment:
+    RABBITMQ_USER: yo
+    RABBITMQ_PASS: yo
+  volumes:
+    - ./data:/var/data/

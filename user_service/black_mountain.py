@@ -5,7 +5,7 @@ import aiopg
 import asyncio
 import asynqp
 import psycopg2
-from retry import retry
+
 
 schema = """CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(100) NOT NULL,
@@ -16,7 +16,7 @@ schema = """CREATE TABLE IF NOT EXISTS users (
 """
 
 update_query = """
---- Cool kid use ON CONFLICT
+--- Cool kids use ON CONFLICT
 SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 BEGIN TRANSACTION;
 UPDATE users set times_received = times_received + 1 where email = %(email)s;
@@ -26,14 +26,33 @@ commit TRANSACTION;
 """
 
 
-log = logging.getLogger()
+log = logging.getLogger(__name__)
+log.addHandler(logging.StreamHandler())
 log.setLevel(logging.DEBUG)
 
 
-@retry(ConnectionRefusedError, tries=10, delay=1)
+async def retry_fut(fut_factory, exceptions, tries=10, delay=1):
+    errors = []
+    for _ in range(tries):
+        fut = fut_factory()
+        try:
+            r = await fut
+            log.info('Future succeeded')
+            return r
+        except exceptions as e:
+            errors.append(e)
+            await asyncio.sleep(delay)
+            log.info('Retrying %s', e)
+    raise RuntimeError("Exhausted: {}".format(errors[0]))
+
+
 async def init_queue():
     # connect to the RabbitMQ broker
-    connection = await asynqp.connect('docker', 5672, username='yo', password='yo')
+    connect = lambda: asynqp.connect('rabbitmq', 5672,
+                                     username=os.getenv('RABBITMQ_USER', 'yo'),
+                                     password=os.getenv('RABBITMQ_PASS', 'yo'))
+
+    connection = await retry_fut(connect, (ConnectionError, ConnectionRefusedError, OSError))
 
     # Open a communications channel
     channel = await connection.open_channel()
@@ -45,9 +64,9 @@ async def init_queue():
     return queue
 
 
-@retry(psycopg2.OperationalError)
 async def init_db():
-    pool = await aiopg.create_pool('postgres://postgres:postgres2016@docker/users')
+    pool_fut = lambda: aiopg.create_pool(os.getenv('DB_URI'))
+    pool = await retry_fut(pool_fut, (psycopg2.OperationalError,))
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(schema)
@@ -70,6 +89,7 @@ def email_collector(queue, pool):
         yield from insert(pool, received_message.json())
         print(received_message.json())  # get JSON from incoming messages easily
         received_message.ack()
+
 
 async def spawn(loop):
     queue = await init_queue()

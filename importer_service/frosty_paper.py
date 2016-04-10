@@ -1,20 +1,36 @@
-import sys
 import logging
+import os
+
 import asyncio
-from asyncio import Queue, Event
 import asynqp
-from retry import retry
+from asyncio import Event, Queue
 
-log = logging.getLogger()
+log = logging.getLogger(__name__)
+log.addHandler(logging.StreamHandler())
 log.setLevel(logging.DEBUG)
-sys.setcheckinterval(500)
 
 
-@retry((ConnectionRefusedError,), tries=10, delay=1)
+async def retry_fut(fut_factory, exceptions, tries=10, delay=1):
+    errors = []
+    for _ in range(tries):
+        fut = fut_factory()
+        try:
+            r = await fut
+            log.info('Future succeeded')
+            return r
+        except exceptions as e:
+            errors.append(e)
+            await asyncio.sleep(delay)
+            log.info('Retrying %s', e)
+    raise RuntimeError("Exhausted: {}".format(errors[0]))
+
+
 async def new_ampq_sender():
     # connect to the RabbitMQ broker
-    connection = await asynqp.connect('docker', 5672, username='yo', password='yo')
-
+    connect = lambda: asynqp.connect('rabbitmq', 5672,
+                                     username=os.getenv('RABBITMQ_USER', 'yo'),
+                                     password=os.getenv('RABBITMQ_PASS', 'yo'))
+    connection = await retry_fut(connect, (ConnectionError, ConnectionRefusedError, OSError))
     # Open a communications channel
     channel = await connection.open_channel()
 
@@ -37,7 +53,9 @@ async def new_ampq_sender():
 
 async def spredsheet_reader(queue, done):
     part = 0
-    with open('data.csv', 'rb') as f:
+    log.info('Started reader')
+
+    with open('/var/data/data.csv', 'rb') as f:
         while True:
             line = f.readline()  # blocking call but not a big deal, huh?
             if not line:
@@ -62,7 +80,7 @@ async def spredsheet_reader(queue, done):
 async def rabbit_sender(queue, rabbit_sender):
     while True:
         msg = await queue.get()
-        print('Sent {}'.format(msg))
+        log.info('Sent {}'.format(msg))
         rabbit_sender(msg)
         queue.task_done()
 
