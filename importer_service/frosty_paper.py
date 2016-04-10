@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 
@@ -51,11 +52,11 @@ async def new_ampq_sender():
     return sender, finalizer
 
 
-async def spredsheet_reader(queue, done):
+async def spredsheet_reader(queue, done, file_path):
     part = 0
     log.info('Started reader')
 
-    with open('/var/data/data.csv', 'rb') as f:
+    with open(file_path, 'rb') as f:
         while True:
             line = f.readline()  # blocking call but not a big deal, huh?
             if not line:
@@ -72,7 +73,7 @@ async def spredsheet_reader(queue, done):
                         await queue.put({'fullname': full_name, 'email': email, 'line': part})
                         break
                     except asyncio.QueueFull:
-                        print('Blocked')
+                        log.debug('Blocked')
                         await asyncio.sleep(.2)
                         continue
 
@@ -86,11 +87,15 @@ async def rabbit_sender(queue, rabbit_sender):
 
 
 async def spawn(loop):
+    parser = argparse.ArgumentParser(description='Import csv spreadsheet')
+    parser.add_argument('-f', '--file', required=False,
+                        help='file path', default='/var/data/data.csv')
+    args = parser.parse_args()
     sender, finalizer = await new_ampq_sender()
     entries_queue = Queue(40)
     tasks = []
     done = Event()
-    t = loop.create_task(spredsheet_reader(entries_queue, done))
+    t = loop.create_task(spredsheet_reader(entries_queue, done, args.file))
     tasks.append(t)
     for _ in range(40):
         t = loop.create_task(rabbit_sender(entries_queue, sender))

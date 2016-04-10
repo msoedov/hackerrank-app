@@ -87,7 +87,7 @@ def email_collector(queue, pool):
             yield from asyncio.sleep(1)
             continue
         yield from insert(pool, received_message.json())
-        print(received_message.json())  # get JSON from incoming messages easily
+        log.info("Message: %s", received_message.json())
         received_message.ack()
 
 

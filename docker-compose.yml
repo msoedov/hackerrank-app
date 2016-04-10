@@ -15,10 +15,8 @@ postgres:
     POSTGRES_PASSWORD: postgres2016
     POSTGRES_DB: users
 
-user:
+user_service:
   build: user_service
-  ports:
-    - "5757"
   links:
      - rabbitmq
      - postgres
